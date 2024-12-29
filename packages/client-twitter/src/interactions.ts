@@ -17,6 +17,46 @@ import {
 } from "@elizaos/core";
 import { ClientBase } from "./base";
 import { buildConversationThread, sendTweet, wait } from "./utils.ts";
+import { generateWebSearch } from "@elizaos/core";
+import { SearchResult } from "@elizaos/core";
+import { encodingForModel, TiktokenModel } from "js-tiktoken";
+
+
+const DEFAULT_MAX_WEB_SEARCH_TOKENS = 4000;
+const DEFAULT_MODEL_ENCODING = "gpt-3.5-turbo";
+
+function getTotalTokensFromString(
+    str: string,
+    encodingName: TiktokenModel = DEFAULT_MODEL_ENCODING
+) {
+    const encoding = encodingForModel(encodingName);
+    return encoding.encode(str).length;
+}
+
+function MaxTokens(
+    data: string,
+    maxTokens: number = DEFAULT_MAX_WEB_SEARCH_TOKENS
+): string {
+    if (getTotalTokensFromString(data) >= maxTokens) {
+        return data.slice(0, maxTokens);
+    }
+    return data;
+}
+
+function cleanTopics (topics: string) {
+    // Remove emojis using a regex pattern
+    const emojiRegex = /[\u{1F600}-\u{1F64F}\u{1F300}-\u{1F5FF}\u{1F680}-\u{1F6FF}\u{1F700}-\u{1F77F}\u{1F780}-\u{1F7FF}\u{1F800}-\u{1F8FF}\u{1F900}-\u{1F9FF}\u{1FA00}-\u{1FA6F}\u{1FA70}-\u{1FAFF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}\u{FE00}-\u{FE0F}]/gu;
+
+    // Replace emojis with an empty string
+    let cleaned = topics.replace(emojiRegex, '');
+
+    // Optionally, remove additional unnecessary text or characters
+    // For example, remove excessive whitespace
+    cleaned = cleaned.replace(/\s+/g, ' ').trim();
+
+    return cleaned;
+}
+
 
 export const twitterMessageHandlerTemplate =
     `
@@ -38,6 +78,9 @@ Recent interactions between {{agentName}} and other users:
 {{recentPostInteractions}}
 
 {{recentPosts}}
+
+#Latest Search Results
+{{searchResults}}
 
 # TASK: Generate a post/reply in the voice, style and perspective of {{agentName}} (@{{twitterUserName}}) while using the thread of tweets as additional context:
 
@@ -294,6 +337,36 @@ export class TwitterInteractionClient {
         }
     }
 
+    private async fetchLatestNews(runtime: IAgentRuntime, topics: string) {
+        const cl = cleanTopics(topics)
+
+        const searchResponse = await generateWebSearch(
+            cl,
+            runtime
+        );
+
+        if (searchResponse && searchResponse.results.length) {
+            const responseList = searchResponse.answer
+                ? `${searchResponse.answer}${
+                      Array.isArray(searchResponse.results) &&
+                      searchResponse.results.length > 0
+                          ? `\n\nSummary of relevant resources:\n${searchResponse.results
+                                .slice(0, 3) // Include only the top 3 results
+                                .map(
+                                    (result: SearchResult) =>
+                                        `- ${result.title}: ${result.content || "No snippet available"}`
+                                )
+                                .join("\n")}`
+                          : ""
+                  }`
+                : searchResponse.answer; // Pass only the answer if no results
+            return MaxTokens(responseList, DEFAULT_MAX_WEB_SEARCH_TOKENS);
+        } else {
+            elizaLogger.log("search failed or returned no data.");
+            return "";
+        }
+    }
+
     private async handleTweet({
         tweet,
         message,
@@ -339,7 +412,9 @@ export class TwitterInteractionClient {
 
         elizaLogger.debug("formattedConversation: ", formattedConversation);
 
-        let state = await this.runtime.composeState(message, {
+        let searchResults = await this.fetchLatestNews(this.runtime, message.content.text)
+
+        let state = await this.runtime.composeState({...message, searchResults}, {
             twitterClient: this.client.twitterClient,
             twitterUserName: this.client.twitterConfig.TWITTER_USERNAME,
             currentPost,

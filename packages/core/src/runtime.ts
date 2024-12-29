@@ -769,7 +769,7 @@ export class AgentRuntime implements IAgentRuntime {
      * @returns The state of the agent.
      */
     async composeState(
-        message: Memory,
+        message: Memory & {searchResults?: string},
         additionalKeys: { [key: string]: unknown } = {}
     ) {
         const { userId, roomId } = message;

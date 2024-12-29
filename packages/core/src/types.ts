@@ -813,6 +813,7 @@ export type Character = {
     nft?: {
         prompt: string;
     };
+    searchTopics?: string[];
 };
 
 /**
@@ -1144,7 +1145,7 @@ export interface IAgentRuntime {
     ensureRoomExists(roomId: UUID): Promise<void>;
 
     composeState(
-        message: Memory,
+        message: Memory & {searchResults?: string},
         additionalKeys?: { [key: string]: unknown }
     ): Promise<State>;
 
